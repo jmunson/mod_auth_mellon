@@ -2759,6 +2759,26 @@ static int am_send_authn_request(request_rec *r, const char *idp,
 
     LASSO_PROFILE(login)->msg_relayState = g_strdup(return_to);
 
+    /*BEGIN PATCH FROM JMUNSON, based on a patch from the mod_mellon mailing list.
+    This adds an AssertionConsumerServiceURL and a ProtocolBinding to the authn request. 
+    I do not know if this is required by SAML specs. I don't even know if it's still valid SAML. 
+    I just know its what our vendor needed for this to work.
+
+    In the future I'd like to research that more and maybe make some config settings to make this optional and try to get this upstream
+    Until then I'll just keep my own fork to try to keep this up to date as needed.
+    */
+
+    if (LASSO_SAMLP2_AUTHN_REQUEST(request)->AssertionConsumerServiceURL == NULL) {
+      char *relative_url = apr_psprintf(r->pool, "%spostResponse", dir_cfg->endpoint_path);
+      char *absolute_url = ap_construct_url(r->pool, relative_url, r);
+     LASSO_SAMLP2_AUTHN_REQUEST(request)->AssertionConsumerServiceURL = g_strdup(absolute_url);
+    }
+    if (LASSO_SAMLP2_AUTHN_REQUEST(request)->ProtocolBinding == NULL) {
+      LASSO_SAMLP2_AUTHN_REQUEST(request)->ProtocolBinding = g_strdup(LASSO_SAML2_METADATA_BINDING_POST);
+    }
+   /* END PATCH */
+
+
     ret = lasso_login_build_authn_request_msg(login);
     if(ret != 0) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
