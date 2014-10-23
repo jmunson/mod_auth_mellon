@@ -45,10 +45,9 @@
 static int am_global_init(apr_pool_t *conf, apr_pool_t *log,
                           apr_pool_t *tmp, server_rec *s)
 {
-    am_cache_entry_t *table;
     apr_size_t        mem_size;
     am_mod_cfg_rec   *mod;
-    int rv, i;
+    int rv;
     const char userdata_key[] = "auth_mellon_init";
     char buffer[512];
     void *data;
@@ -108,11 +107,7 @@ static int am_global_init(apr_pool_t *conf, apr_pool_t *log,
     }
 
     /* Initialize the session table. */
-    table = apr_shm_baseaddr_get(mod->cache);
-    for (i = 0; i < mod->cache_size; i++) {
-        table[i].key[0] = '\0';
-        table[i].access = 0;
-    }
+    am_cache_init(mod);
 
     /* Now create the mutex that we need for locking the shared memory, then
      * test for success. we really need this, so we exit on failure. */
@@ -193,7 +188,17 @@ static void register_hooks(apr_pool_t *p)
     ap_hook_check_user_id(am_check_uid, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_post_config(am_global_init, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_child_init(am_child_init, NULL, NULL, APR_HOOK_MIDDLE);
-    ap_hook_handler(am_handler, NULL, NULL, APR_HOOK_MIDDLE);
+
+    /* Add the hook to handle requests to the mod_auth_mellon endpoint.
+     *
+     * This is APR_HOOK_FIRST because we do not expect nor require users
+     * to add a SetHandler option for the endpoint. Instead, simply
+     * setting MellonEndpointPath should be enough.
+     *
+     * Therefore this hook must run before any handler that may check
+     * r->handler and decide that it is the only handler for this URL.
+     */
+    ap_hook_handler(am_handler, NULL, NULL, APR_HOOK_FIRST);
     return;
 }
 

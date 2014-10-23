@@ -21,6 +21,45 @@
 
 #include "auth_mellon.h"
 
+/* Calculate the pointer to a cache entry.
+ *
+ * Parameters:
+ *  am_mod_cfg_rec *mod_cfg  The module configuration.
+ *  void *table              The base pointer for the table.
+ *  apr_size_t index         The index we are looking for.
+ *
+ * Returns:
+ *  The session entry with the given index.
+ */
+static inline am_cache_entry_t *am_cache_entry_ptr(am_mod_cfg_rec *mod_cfg,
+                                                   void *table, apr_size_t index)
+{
+    uint8_t *table_calc;
+    table_calc = table;
+    return (am_cache_entry_t *)&table_calc[mod_cfg->init_entry_size * index];
+}
+
+/* Initialize the session table.
+ *
+ * Parameters:
+ *  am_mod_cfg_rec *mod_cfg  The module configuration.
+ *
+ * Returns:
+ *  Nothing.
+ */
+void am_cache_init(am_mod_cfg_rec *mod_cfg)
+{
+    void *table;
+    apr_size_t i;
+    /* Initialize the session table. */
+    table = apr_shm_baseaddr_get(mod_cfg->cache);
+    for (i = 0; i < mod_cfg->init_cache_size; i++) {
+        am_cache_entry_t *e = am_cache_entry_ptr(mod_cfg, table, i);
+        e->key[0] = '\0';
+        e->access = 0;
+    }
+}
+
 /* This function locks the session table and locates a session entry.
  * Unlocks the table and returns NULL if the entry wasn't found.
  * If a entry was found, then you _must_ unlock it with am_cache_unlock
@@ -39,8 +78,8 @@ am_cache_entry_t *am_cache_lock(server_rec *s,
                                 const char *key)
 {
     am_mod_cfg_rec *mod_cfg;
-    am_cache_entry_t *table;
-    int i;
+    void *table;
+    apr_size_t i;
     int rv;
     char buffer[512];
 
@@ -76,15 +115,21 @@ am_cache_entry_t *am_cache_lock(server_rec *s,
 
 
     for(i = 0; i < mod_cfg->init_cache_size; i++) {
+        am_cache_entry_t *e = am_cache_entry_ptr(mod_cfg, table, i);
         const char *tablekey;
+
+        if (e->key[0] == '\0') {
+            /* This entry is empty. Skip it. */
+            continue;
+        }
 
         switch (type) {
         case AM_CACHE_SESSION:
-            tablekey = table[i].key;
+            tablekey = e->key;
             break;
         case AM_CACHE_NAMEID:
             /* tablekey may be NULL */
-            tablekey = am_cache_env_fetch_first(&table[i], "NAME_ID");
+            tablekey = am_cache_env_fetch_first(e, "NAME_ID");
             break;
         default:
             tablekey = NULL;
@@ -96,9 +141,9 @@ am_cache_entry_t *am_cache_lock(server_rec *s,
 
         if(strcmp(tablekey, key) == 0) {
             /* We found the entry. */
-            if(table[i].expires > apr_time_now()) {
+            if(e->expires > apr_time_now()) {
                 /* And it hasn't expired. */
-                return &table[i];
+                return e;
             }
         }
     }
@@ -233,7 +278,7 @@ am_cache_entry_t *am_cache_new(server_rec *s, const char *key)
 {
     am_cache_entry_t *t;
     am_mod_cfg_rec *mod_cfg;
-    am_cache_entry_t *table;
+    void *table;
     apr_time_t current_time;
     int i;
     apr_time_t age;
@@ -268,7 +313,7 @@ am_cache_entry_t *am_cache_new(server_rec *s, const char *key)
      * initalize it to the first entry in the table to simplify the
      * following code (saves test for t == NULL).
      */
-    t = &table[0];
+    t = am_cache_entry_ptr(mod_cfg, table, 0);;
 
     /* Iterate over the session table. Update 't' to match the "best"
      * entry (the least recently used). 't' will point a free entry
@@ -276,25 +321,26 @@ am_cache_entry_t *am_cache_new(server_rec *s, const char *key)
      * used entry.
      */
     for(i = 0; i < mod_cfg->init_cache_size; i++) {
-        if(table[i].key[0] == '\0') {
+        am_cache_entry_t *e = am_cache_entry_ptr(mod_cfg, table, i);
+        if (e->key[0] == '\0') {
             /* This entry is free. Update 't' to this entry
              * and exit loop.
              */
-            t = &table[i];
+            t = e;
             break;
         }
 
-        if(table[i].expires <= current_time) {
+        if (e->expires <= current_time) {
             /* This entry is expired, and is therefore free.
              * Update 't' and exit loop.
              */
-            t = &table[i];
+            t = e;
             break;
         }
 
-        if(table[i].access < t->access) {
+        if (e->access < t->access) {
             /* This entry is older than 't' - update 't'. */
-            t = &table[i];
+            t = e;
         }
     }
 
@@ -444,12 +490,12 @@ const char *am_cache_env_fetch_first(am_cache_entry_t *t,
     const char *str;
     int i;
 
-    for (i = 0; t->size; i++) {
+    for (i = 0; i < t->size; i++) {
         str = am_cache_entry_get_string(t, &t->env[i].varname);
         if (str == NULL)
             break;
         if (strcmp(str, var) == 0)
-            return str;
+            return am_cache_entry_get_string(t, &t->env[i].value);
     }
 
     return NULL;
