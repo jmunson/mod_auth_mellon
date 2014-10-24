@@ -2782,11 +2782,15 @@ static int am_send_authn_request(request_rec *r, const char *idp,
     Until then I'll just keep my own fork to try to keep this up to date as needed.
     */
 
-    if (LASSO_SAMLP2_AUTHN_REQUEST(request)->AssertionConsumerServiceURL == NULL) {
+
+    //mod_auth_mellon added support for this, leaving this in and commented incase it ends up not being compatible. Seems to pass initial testing..
+    /*if (LASSO_SAMLP2_AUTHN_REQUEST(request)->AssertionConsumerServiceURL == NULL) {
       char *relative_url = apr_psprintf(r->pool, "%spostResponse", dir_cfg->endpoint_path);
       char *absolute_url = ap_construct_url(r->pool, relative_url, r);
      LASSO_SAMLP2_AUTHN_REQUEST(request)->AssertionConsumerServiceURL = g_strdup(absolute_url);
-    }
+    }*/
+
+//mod_auth_mellon does not currently set protocolbinding, so we do it here. This likely breaks other saml providers, but makes it work with the one we need to use
     if (LASSO_SAMLP2_AUTHN_REQUEST(request)->ProtocolBinding == NULL) {
       LASSO_SAMLP2_AUTHN_REQUEST(request)->ProtocolBinding = g_strdup(LASSO_SAML2_METADATA_BINDING_POST);
     }
